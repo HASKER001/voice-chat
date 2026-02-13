@@ -3,83 +3,77 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Голосовой Чат</title>
+  <title>Голосовой Чат 2.0</title>
   <style>
-    body { background: #121212; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; }
-    #video-grid { display: flex; gap: 10px; flex-wrap: wrap; }
-    video { width: 0; height: 0; } /* Скрываем видео, оставляем только звук */
+    body { background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; font-family: 'Segoe UI', sans-serif; }
+    #status { margin-bottom: 20px; font-size: 1.2rem; font-weight: bold; color: #38bdf8; }
+    .mic-indicator { width: 100px; height: 100px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); transition: transform 0.1s ease; display: flex; align-items: center; justify-content: center; font-size: 40px; }
+    #video-grid { display: none; } /* Нам не нужно видео */
+    .room-info { margin-top: 20px; color: #94a3b8; }
   </style>
-  <script>
-    const ROOM_ID = "<%= roomId %>";
-  </script>
   <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
-  <div id="status">Подключение... (Разреши микрофон)</div>
+  <div id="status">Разреши доступ к микрофону...</div>
+  
+  <div id="mic" class="mic-indicator">🎤</div>
+
+  <div class="room-info">ID комнаты: <span id="room-id-display"></span></div>
   <div id="video-grid"></div>
 
   <script>
     const socket = io('/');
-    const videoGrid = document.getElementById('video-grid');
-    const myPeer = new Peer(undefined, {
-      host: '0.peerjs.com', 
-      port: 443, 
-      path: '/'
-    });
+    const micElement = document.getElementById('mic');
+    document.getElementById('room-id-display').innerText = window.location.pathname.replace('/', '');
 
-    const myVideo = document.createElement('video');
-    myVideo.muted = true; // Себя не слышим
+    const myPeer = new Peer(undefined, { host: '0.peerjs.com', port: 443, path: '/' });
     const peers = {};
 
-    navigator.mediaDevices.getUserMedia({
-      video: false,
-      audio: true
-    }).then(stream => {
-      document.getElementById('status').innerText = "Ты в эфире! Кидай ссылку другу.";
-      addVideoStream(myVideo, stream);
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      document.getElementById('status').innerText = "Ты в эфире! Ждем друзей...";
+      
+      // ВИЗУАЛИЗАЦИЯ ГОЛОСА
+      const audioContext = new AudioContext();
+      const analyser = audioContext.createAnalyser();
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+      analyser.fftSize = 64;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      function draw() {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for(let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        let average = sum / dataArray.length;
+        
+        // Масштабируем кружок в зависимости от громкости
+        let scale = 1 + (average / 128);
+        micElement.style.transform = `scale(${scale})`;
+        requestAnimationFrame(draw);
+      }
+      draw();
 
       myPeer.on('call', call => {
         call.answer(stream);
-        const video = document.createElement('video');
-        call.on('stream', userVideoStream => {
-          addVideoStream(video, userVideoStream);
-        });
+        call.on('stream', userStream => { addAudio(userStream); });
       });
 
       socket.on('user-connected', userId => {
-        connectToNewUser(userId, stream);
+        document.getElementById('status').innerText = "Кто-то подключился! Слышишь его?";
+        const call = myPeer.call(userId, stream);
+        call.on('stream', userStream => { addAudio(userStream); });
       });
     });
 
-    socket.on('user-disconnected', userId => {
-      if (peers[userId]) peers[userId].close();
-    });
+    myPeer.on('open', id => { socket.emit('join-room', "<%= roomId %>", id); });
 
-    myPeer.on('open', id => {
-      socket.emit('join-room', ROOM_ID, id);
-    });
-
-    function connectToNewUser(userId, stream) {
-      const call = myPeer.call(userId, stream);
-      const video = document.createElement('video');
-      call.on('stream', userVideoStream => {
-        addVideoStream(video, userVideoStream);
-      });
-      call.on('close', () => {
-        video.remove();
-      });
-      peers[userId] = call;
-    }
-
-    function addVideoStream(video, stream) {
-      video.srcObject = stream;
-      video.addEventListener('loadedmetadata', () => {
-        video.play();
-      });
-      videoGrid.append(video);
+    function addAudio(stream) {
+      const audio = document.createElement('audio');
+      audio.srcObject = stream;
+      audio.addEventListener('loadedmetadata', () => { audio.play(); });
+      document.body.append(audio);
     }
   </script>
 </body>
 </html>
-
